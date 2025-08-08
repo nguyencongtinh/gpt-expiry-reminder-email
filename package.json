@@ -1,0 +1,15 @@
+{
+  "name": "gpt-expiry-reminder-email",
+  "version": "1.0.0",
+  "description": "Tự động gửi email nhắc hạn sử dụng GPTs qua Google Sheets",
+  "main": "send-reminder-logic.js",
+  "scripts": {
+    "start": "node send-reminder-logic.js"
+  },
+  "dependencies": {
+    "googleapis": "^132.0.0",
+    "google-auth-library": "^9.0.0",
+    "nodemailer": "^6.9.8",
+    "dotenv": "^16.4.5"
+  }
+}

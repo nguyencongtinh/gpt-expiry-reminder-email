@@ -143,7 +143,7 @@ const HDR = {
         await sendEmail(
           email,
           `[Nhắc hạn] GPT "${gptName}" sẽ hết hạn sau 5 ngày`,
-          `Chào bạn,\nGPT "${gptName}" (ID: ${id}) sẽ hết hạn vào ngày ${expirePretty}.\nVui lòng gia hạn để không bị gián đoạn.\nTrân trọng!`
+          `Chào bạn,\nGPT "${gptName}" sẽ hết hạn vào ngày ${expirePretty}.\nVui lòng gia hạn để không bị gián đoạn.\nTrân trọng!`
         );
         await updateCell(r, idx5, "Đã gửi");
         console.log(`[MAIL-5D] Row ${r + 1} -> ${email} | ${gptName} | ${expirePretty}`);
@@ -154,7 +154,7 @@ const HDR = {
         await sendEmail(
           email,
           `[Nhắc hạn] GPT "${gptName}" sẽ hết hạn NGÀY MAI!`,
-          `Chào bạn,\nGPT "${gptName}" (ID: ${id}) sẽ hết hạn vào NGÀY MAI (${expirePretty}).\nVui lòng gia hạn nếu muốn tiếp tục sử dụng.\nTrân trọng!`
+          `Chào bạn,\nGPT "${gptName}" sẽ hết hạn vào NGÀY MAI (${expirePretty}).\nVui lòng gia hạn nếu muốn tiếp tục sử dụng.\nTrân trọng!`
         );
         await updateCell(r, idx1, "Đã gửi");
         console.log(`[MAIL-1D] Row ${r + 1} -> ${email} | ${gptName} | ${expirePretty}`);

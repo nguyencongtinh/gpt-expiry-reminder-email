@@ -1,9 +1,9 @@
 /**
- * send-gpt-expiry-reminder.js
- * - Đọc Google Sheet (private, Service Account)
+ * send-gpt-expiry-reminder.js (FIXED)
+ * - Đọc Google Sheet (JWT Service Account)
  * - Dò cột theo header (không lệch khi chèn/di chuyển cột)
  * - Múi giờ Việt Nam (UTC+7)
- * - Reset E/F (đánh dấu gửi) khi còn >= 6 ngày tới hạn
+ * - RESET E/F khi daysLeft >= 6 (đặt ngay sau khi tính daysLeft, trước mọi continue)
  * - Gửi nhắc hạn 2 mốc: trước 5 ngày & trước 1 ngày
  *
  * ENV cần có:
@@ -12,7 +12,7 @@
  *  - GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n....\n-----END PRIVATE KEY-----\n"
  *  - GMAIL_USER=...
  *  - GMAIL_PASS=...
- *  - (tuỳ chọn) SHEET_NAME=Sheet1
+ *  - (optional) SHEET_NAME=Sheet1
  */
 
 const { google } = require("googleapis");
@@ -23,7 +23,7 @@ require("dotenv").config();
 // ========= CẤU HÌNH =========
 const SHEET_ID = process.env.SHEET_ID;
 const SHEET_NAME = process.env.SHEET_NAME || "Sheet1";
-const SHEET_READ_RANGE = `${SHEET_NAME}!1:10000`; // đủ rộng
+const SHEET_READ_RANGE = `${SHEET_NAME}!1:10000`; // đọc cả header + data
 
 // ========= HỖ TRỢ THỜI GIAN (VN) =========
 function getTodayVN() {
@@ -70,15 +70,18 @@ function findColIdx(headers, aliases) {
   }
   return -1;
 }
+function a1Cell(rowIdx0, colIdx0) {
+  return `${SHEET_NAME}!${colIndexToA1(colIdx0)}${rowIdx0 + 1}`;
+}
 
 // ========= HEADER ALIASES =========
 const HDR = {
-  EMAIL: ["email", "email cho phép sử dụng gpts", "địa chỉ email", "Email được phép sử dụng GPTs", "email duoc phep su dung gpts"],
-  EXPIRE: ["thời hạn sử dụng gpts", "ngày hết hạn", "hạn sử dụng", "thoi han su dung gpts", "Thời hạn sử dụng", "han su dung"],
-  GPT_ID: ["id", "gpt id", "mã gpt", "GPTs ID","ma gpt"],
-  GPT_NAME: ["tên gpts", "ten gpts", "ten gpt", "Tên GPTs", "tên gpt"],
-  SENT_5D: ["đã gửi trước 5 ngày", "da gui truoc 5 ngay", "sent 5d", "Đã gửi trước 5 ngày", "Nhắc trước 5 ngày", "nhac 5 ngay"],
-  SENT_1D: ["đã gửi trước 1 ngày", "da gui truoc 1 ngay", "sent 1d", "Đã gửi trước 1 ngày", "Nhắc trước 1 ngày","nhac 1 ngay"],
+  EMAIL: ["email", "email được phép sử dụng gpts", "địa chỉ email", "email cho phép sử dụng gpts", "email duoc phep su dung gpts"],
+  EXPIRE: ["thời hạn sử dụng gpts", "thời hạn sử dụng", "ngày hết hạn", "hạn sử dụng", "thoi han su dung gpts", "han su dung"],
+  GPT_ID: ["id", "gpt id", "mã gpt", "gpts id", "ma gpt"],
+  GPT_NAME: ["tên gpts", "ten gpts", "ten gpt", "tên gpt"],
+  SENT_5D: ["đã gửi trước 5 ngày", "nhắc trước 5 ngày", "nhắc hạn trước 5 ngày", "da gui truoc 5 ngay", "sent 5d", "nhac 5 ngay"],
+  SENT_1D: ["đã gửi trước 1 ngày", "nhắc trước 5 ngày", "nhắc hạn trước 5 ngày", "da gui truoc 1 ngay", "sent 1d", "nhac 1 ngay"],
 };
 
 // ========= SHEETS HELPERS =========
@@ -92,9 +95,7 @@ async function getAllRows() {
 }
 async function updateCell(rowIndexZeroBased, colIndexZeroBased, value) {
   const sheets = google.sheets({ version: "v4", auth });
-  const a1col = colIndexToA1(colIndexZeroBased);
-  const a1row = rowIndexZeroBased + 1; // 0-based -> 1-based A1
-  const range = `${SHEET_NAME}!${a1col}${a1row}`;
+  const range = a1Cell(rowIndexZeroBased, colIndexZeroBased);
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
     range,
@@ -131,11 +132,13 @@ async function sendEmail(to, subject, text) {
 
     const missing = [];
     if (idxEmail === -1) missing.push("Email");
-    if (idxExpire === -1) missing.push("Thời hạn sử dụng GPTs");
-    if (idxId === -1) missing.push("ID (GPT ID)");
+    if (idxExpire === -1) missing.push("Thời hạn sử dụng");
+    if (idxId === -1) missing.push("GPT ID");
     if (idxName === -1) missing.push("Tên GPTs");
     if (idxSent5 === -1) missing.push("Đã gửi trước 5 ngày");
     if (idxSent1 === -1) missing.push("Đã gửi trước 1 ngày");
+
+    console.log(`[INFO] Header mapping -> Email:${idxEmail}, Expire:${idxExpire}, ID:${idxId}, Name:${idxName}, 5D:${idxSent5}, 1D:${idxSent1}`);
 
     if (missing.length) {
       console.error("[ERROR] Thiếu cột:", missing.join(", "));
@@ -147,58 +150,62 @@ async function sendEmail(to, subject, text) {
 
     for (let r = 1; r < rows.length; r++) {
       const row = rows[r] || [];
-      const email = (row[idxEmail] || "").trim();
-      const expireDateRaw = (row[idxExpire] || "").trim();
-      const id = (row[idxId] || "").trim();
-      const gptName = (row[idxName] || "").trim();
-      const colEraw = (row[idxSent5] || "").trim(); // E: đã gửi 5d
-      const colFraw = (row[idxSent1] || "").trim(); // F: đã gửi 1d
+      const email = String(row[idxEmail] || "").trim();
+      const expireStrRaw = String(row[idxExpire] || "").trim();
+      const id = String(row[idxId] || "").trim();
+      const gptName = String(row[idxName] || "").trim();
+      const eRaw = String(row[idxSent5] || "").trim();
+      const fRaw = String(row[idxSent1] || "").trim();
 
-      if (!email || !expireDateRaw) continue;
+      if (!email || !expireStrRaw) {
+        if (!email && !expireStrRaw && !id && !gptName) continue; // dòng trống
+        console.log(`[SKIP] Row ${r + 1} thiếu email/expire. email="${email}" expire="${expireStrRaw}"`);
+        continue;
+      }
 
-      // Parse ngày dd/mm/yyyy (cho phép 1 chữ số d/m)
-      const m = expireDateRaw.match(/^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/);
+      // Parse dd/mm/yyyy (chấp nhận 1 chữ số d/m)
+      const m = expireStrRaw.match(/^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/);
       if (!m) {
-        console.warn(`[WARN] Dòng ${r + 1}: định dạng ngày không phải dd/mm/yyyy -> "${expireDateRaw}"`);
+        console.warn(`[WARN] Row ${r + 1}: định dạng ngày không phải dd/mm/yyyy -> "${expireStrRaw}"`);
         continue;
       }
       const dd = parseInt(m[1], 10), mm = parseInt(m[2], 10), yyyy = parseInt(m[3], 10);
-      const expireDate = `${String(dd).padStart(2,'0')}/${String(mm).padStart(2,'0')}/${yyyy}`; // chuẩn hóa hiển thị
+      const expireStr = `${String(dd).padStart(2,'0')}/${String(mm).padStart(2,'0')}/${yyyy}`;
       const expire = new Date(yyyy, mm - 1, dd);
       const daysLeft = daysBetween(today, expire);
 
-      // --- RESET marker nếu thời hạn mới còn >= 6 ngày ---
-      if (daysLeft >= 6 && (colEraw || colFraw)) {
+      // ---------- RESET MARKER NGAY SAU KHI TÍNH daysLeft ----------
+      if (daysLeft >= 6 && (eRaw || fRaw)) {
         await updateCell(r, idxSent5, "");
         await updateCell(r, idxSent1, "");
-        console.log(`[RESET] Row ${r + 1}: cleared E/F vì daysLeft = ${daysLeft}`);
+        console.log(`[RESET] Row ${r + 1}: cleared E/F vì daysLeft = ${daysLeft} | expire=${expireStr}`);
       }
 
-      // Tính lại flag sau khi có thể đã reset
-      const sent5 = (colEraw && daysLeft < 6) ? true : false;
-      const sent1 = (colFraw && daysLeft < 6) ? true : false;
+      // Sau reset, xác định đã gửi (chỉ coi là đã gửi nếu daysLeft < 6 và ô không trống)
+      const sent5 = (daysLeft < 6) && !!eRaw;
+      const sent1 = (daysLeft < 6) && !!fRaw;
 
-      // --- GỬI THEO MỐC ---
+      // ---------- GỬI NHẮC ----------
       if (daysLeft === 5 && !sent5) {
         const subject = `[Nhắc hạn] GPT "${gptName}" sẽ hết hạn sau 5 ngày`;
         const body = `Chào bạn,
-GPT "${gptName}" (ID: ${id}) sẽ hết hạn vào ngày ${expireDate}.
+GPT "${gptName}" (ID: ${id}) sẽ hết hạn vào ngày ${expireStr}.
 Vui lòng gia hạn để không bị gián đoạn.
 Trân trọng!`;
         await sendEmail(email, subject, body);
-        await updateCell(r, idxSent5, `Đã gửi@${expireDate} (${new Date().toISOString()})`);
-        console.log(`[MAIL-5D] Row ${r + 1} -> ${email} | ${gptName} | ${expireDate}`);
+        await updateCell(r, idxSent5, `Đã gửi@${expireStr} (${new Date().toISOString()})`);
+        console.log(`[MAIL-5D] Row ${r + 1} -> ${email} | ${gptName} | ${expireStr}`);
       }
 
       if (daysLeft === 1 && !sent1) {
         const subject = `[Nhắc hạn] GPT "${gptName}" sẽ hết hạn NGÀY MAI!`;
         const body = `Chào bạn,
-GPT "${gptName}" (ID: ${id}) sẽ hết hạn vào NGÀY MAI (${expireDate}).
+GPT "${gptName}" (ID: ${id}) sẽ hết hạn vào NGÀY MAI (${expireStr}).
 Vui lòng gia hạn nếu muốn tiếp tục sử dụng.
 Trân trọng!`;
         await sendEmail(email, subject, body);
-        await updateCell(r, idxSent1, `Đã gửi@${expireDate} (${new Date().toISOString()})`);
-        console.log(`[MAIL-1D] Row ${r + 1} -> ${email} | ${gptName} | ${expireDate}`);
+        await updateCell(r, idxSent1, `Đã gửi@${expireStr} (${new Date().toISOString()})`);
+        console.log(`[MAIL-1D] Row ${r + 1} -> ${email} | ${gptName} | ${expireStr}`);
       }
     }
 
